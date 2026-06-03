@@ -6,12 +6,17 @@ from PyQt5.QtGui import QFont, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -127,7 +132,9 @@ def salvar_imagem(estado, janela):
 def restaurar_original(estado, janela, widgets):
     """Restaura imagem ao estado original."""
     if estado["imagem_original"] is None:
-        QMessageBox.information(janela, "Aviso", "Nenhuma imagem original para restaurar.")
+        QMessageBox.information(
+            janela, "Aviso", "Nenhuma imagem original para restaurar."
+        )
         return
 
     estado["imagem_atual"] = estado["imagem_original"].copy()
@@ -142,20 +149,52 @@ def pedir_redimensionar(estado, janela, widgets, metodo):
 
     array = qimage_para_array(estado["imagem_atual"])
     altura, largura = array.shape[:2]
+    proporcao = largura / altura
 
-    nova_largura, ok = QInputDialog.getInt(
-        janela, "Largura", "Nova largura:", largura, 1, 10000
-    )
-    if not ok:
+    dialogo = QDialog(janela)
+    dialogo.setWindowTitle("Redimensionar")
+    layout = QFormLayout(dialogo)
+
+    spin_largura = QSpinBox()
+    spin_largura.setRange(1, 10000)
+    spin_largura.setValue(largura)
+    layout.addRow("Largura:", spin_largura)
+
+    spin_altura = QSpinBox()
+    spin_altura.setRange(1, 10000)
+    spin_altura.setValue(altura)
+    layout.addRow("Altura:", spin_altura)
+
+    check_proporcao = QCheckBox("Manter proporção")
+    check_proporcao.setChecked(True)
+    layout.addRow(check_proporcao)
+
+    atualizando = {"flag": False}
+
+    def largura_mudou(valor):
+        if check_proporcao.isChecked() and not atualizando["flag"]:
+            atualizando["flag"] = True
+            spin_altura.setValue(int(valor / proporcao))
+            atualizando["flag"] = False
+
+    def altura_mudou(valor):
+        if check_proporcao.isChecked() and not atualizando["flag"]:
+            atualizando["flag"] = True
+            spin_largura.setValue(int(valor * proporcao))
+            atualizando["flag"] = False
+
+    spin_largura.valueChanged.connect(largura_mudou)
+    spin_altura.valueChanged.connect(altura_mudou)
+
+    botoes = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    botoes.accepted.connect(dialogo.accept)
+    botoes.rejected.connect(dialogo.reject)
+    layout.addRow(botoes)
+
+    if dialogo.exec_() != QDialog.Accepted:
         return
 
-    nova_altura, ok = QInputDialog.getInt(
-        janela, "Altura", "Nova altura:", altura, 1, 10000
-    )
-    if not ok:
-        return
-
-    resultado = metodo(array, nova_largura, nova_altura)
+    resultado = metodo(array, spin_largura.value(), spin_altura.value())
     estado["imagem_atual"] = array_para_qimage(resultado)
     exibir_imagem(estado, widgets)
 
@@ -216,9 +255,7 @@ def criar_menu(estado, janela, widgets):
 
     acao_vizinho = QAction("Vizinho Mais Próximo", janela)
     acao_vizinho.triggered.connect(
-        lambda: pedir_redimensionar(
-            estado, janela, widgets, proc.redimensionar_vizinho
-        )
+        lambda: pedir_redimensionar(estado, janela, widgets, proc.redimensionar_vizinho)
     )
     menu_redimensionar.addAction(acao_vizinho)
 
@@ -262,9 +299,7 @@ def criar_menu(estado, janela, widgets):
 
     acao_gaussiano = QAction("Gaussiano (Suavização)", janela)
     acao_gaussiano.triggered.connect(
-        lambda: aplicar_processamento(
-            estado, janela, widgets, proc.filtro_gaussiano
-        )
+        lambda: aplicar_processamento(estado, janela, widgets, proc.filtro_gaussiano)
     )
     menu_filtros.addAction(acao_gaussiano)
 
@@ -272,16 +307,12 @@ def criar_menu(estado, janela, widgets):
 
     acao_laplaciano = QAction("Laplaciano (Aguçamento)", janela)
     acao_laplaciano.triggered.connect(
-        lambda: aplicar_processamento(
-            estado, janela, widgets, proc.filtro_laplaciano
-        )
+        lambda: aplicar_processamento(estado, janela, widgets, proc.filtro_laplaciano)
     )
     menu_filtros.addAction(acao_laplaciano)
 
     acao_highboost = QAction("High-Boost (Aguçamento)", janela)
-    acao_highboost.triggered.connect(
-        lambda: pedir_high_boost(estado, janela, widgets)
-    )
+    acao_highboost.triggered.connect(lambda: pedir_high_boost(estado, janela, widgets))
     menu_filtros.addAction(acao_highboost)
 
 
