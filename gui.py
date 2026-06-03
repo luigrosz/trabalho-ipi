@@ -34,25 +34,29 @@ def carregar_estilo():
 
 
 def qimage_para_array(qimage):
-    """Converte QImage para numpy array."""
-    qimage = qimage.convertToFormat(QImage.Format_RGBA8888)
+    """Converte QImage para numpy array RGB (3 canais)."""
+    qimage = qimage.convertToFormat(QImage.Format_RGB888)
     largura = qimage.width()
     altura = qimage.height()
+    # bytesPerLine pode ser maior que largura*3 por causa de padding de alinhamento
+    bytes_por_linha = qimage.bytesPerLine()
     ptr = qimage.bits()
-    ptr.setsize(altura * largura * 4)
-    array = np.array(ptr).reshape((altura, largura, 4))
+    ptr.setsize(altura * bytes_por_linha)
+    # Lê com stride real e descarta bytes de padding no final de cada linha
+    array = np.array(ptr).reshape((altura, bytes_por_linha))
+    array = array[:, :largura * 3].reshape((altura, largura, 3))
     return array.copy()
 
 
 def array_para_qimage(array):
     """Converte numpy array para QImage."""
     if len(array.shape) == 2:
-        rgba = np.stack([array, array, array, np.full_like(array, 255)], axis=2)
-        array = rgba
+        # Grayscale — converte pra RGB
+        array = np.stack([array, array, array], axis=2)
     altura, largura, canais = array.shape
     bytes_por_linha = largura * canais
     return QImage(
-        array.data, largura, altura, bytes_por_linha, QImage.Format_RGBA8888
+        array.data, largura, altura, bytes_por_linha, QImage.Format_RGB888
     ).copy()
 
 
@@ -119,11 +123,21 @@ def salvar_imagem(estado, janela):
         QMessageBox.information(janela, "Aviso", "Nenhuma imagem para salvar.")
         return
 
-    filtros = "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;TIFF (*.tiff *.tif)"
-    caminho, _ = QFileDialog.getSaveFileName(janela, "Salvar Imagem", "", filtros)
+    filtros = "PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp);;TIFF (*.tiff)"
+    caminho, filtro_usado = QFileDialog.getSaveFileName(janela, "Salvar Imagem", "", filtros)
 
     if not caminho:
         return
+
+    # Adiciona extensão se usuário não digitou
+    extensoes = {
+        "PNG (*.png)": ".png",
+        "JPEG (*.jpg)": ".jpg",
+        "BMP (*.bmp)": ".bmp",
+        "TIFF (*.tiff)": ".tiff",
+    }
+    if "." not in os.path.basename(caminho):
+        caminho += extensoes.get(filtro_usado, ".png")
 
     if not estado["imagem_atual"].save(caminho):
         QMessageBox.warning(janela, "Erro", f"Não foi possível salvar: {caminho}")

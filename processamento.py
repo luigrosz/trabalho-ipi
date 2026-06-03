@@ -77,7 +77,6 @@ def ajuste_gamma(imagem, gamma):
 def equalizar_histograma(imagem):
     """Equaliza histograma da imagem para melhorar contraste."""
     if len(imagem.shape) == 3:
-        # Processa cada canal separadamente
         resultado = np.zeros_like(imagem)
         for c in range(imagem.shape[2]):
             resultado[:, :, c] = _equalizar_canal(imagem[:, :, c])
@@ -112,7 +111,6 @@ def _equalizar_canal(canal):
 
 def _aplicar_filtro(imagem, kernel):
     """Aplica convolução com kernel na imagem."""
-    altura, largura = imagem.shape[:2]
     kh, kw = kernel.shape
     pad_y = kh // 2
     pad_x = kw // 2
@@ -132,7 +130,6 @@ def _convolver_canal(canal, kernel, pad_y, pad_x):
     altura, largura = canal.shape
     kh, kw = kernel.shape
 
-    # Padding com zeros
     padded = np.pad(
         canal.astype(np.float64), ((pad_y, pad_y), (pad_x, pad_x)), mode="edge"
     )
