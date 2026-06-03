@@ -1,0 +1,47 @@
+QMainWindow {
+    background-color: #1e1e2e;
+}
+QMenuBar {
+    background-color: #181825;
+    color: #cdd6f4;
+    font-size: 14px;
+    padding: 4px;
+    border-bottom: 1px solid #313244;
+}
+QMenuBar::item:selected {
+    background-color: #313244;
+    border-radius: 4px;
+}
+QMenu {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    border: 1px solid #313244;
+    padding: 4px;
+}
+QMenu::item:selected {
+    background-color: #45475a;
+    border-radius: 4px;
+}
+QMenu::separator {
+    height: 1px;
+    background-color: #313244;
+    margin: 4px 8px;
+}
+QScrollArea#scroll_area {
+    border: none;
+    background-color: #1e1e2e;
+}
+QScrollArea#scroll_area > QWidget > QWidget {
+    background-color: #1e1e2e;
+}
+QLabel {
+    color: #6c7086;
+    font-size: 16px;
+}
+QLabel#label_info {
+    background-color: #181825;
+    color: #a6adc8;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-top: 1px solid #313244;
+}
