@@ -1,5 +1,6 @@
 import os
 
+import cv2
 import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QImage, QPixmap
@@ -33,26 +34,21 @@ def carregar_estilo():
         return f.read()
 
 
-def qimage_para_array(qimage):
-    """Converte QImage para numpy array RGB (3 canais)."""
-    qimage = qimage.convertToFormat(QImage.Format_RGB888)
-    largura = qimage.width()
-    altura = qimage.height()
-    # bytesPerLine pode ser maior que largura*3 por causa de padding de alinhamento
-    bytes_por_linha = qimage.bytesPerLine()
-    ptr = qimage.bits()
-    ptr.setsize(altura * bytes_por_linha)
-    # Lê com stride real e descarta bytes de padding no final de cada linha
-    array = np.array(ptr).reshape((altura, bytes_por_linha))
-    array = array[:, :largura * 3].reshape((altura, largura, 3))
-    return array.copy()
+def carregar_imagem(caminho):
+    """Carrega imagem com OpenCV e retorna array uint8 RGB."""
+    # cv2.imread lê em BGR por padrão
+    imagem = cv2.imread(caminho, cv2.IMREAD_COLOR)
+    if imagem is None:
+        raise ValueError(f"Não foi possível carregar: {caminho}")
+    # Converte BGR → RGB
+    return cv2.cvtColor(imagem, cv2.COLOR_BGR2RGB)
 
 
 def array_para_qimage(array):
-    """Converte numpy array para QImage."""
+    """Converte numpy array para QImage pra exibição."""
     if len(array.shape) == 2:
-        # Grayscale — converte pra RGB
         array = np.stack([array, array, array], axis=2)
+    array = np.ascontiguousarray(array)
     altura, largura, canais = array.shape
     bytes_por_linha = largura * canais
     return QImage(
@@ -67,11 +63,11 @@ def atualizar_info(estado, label_info):
         return
 
     atual = estado["imagem_atual"]
-    texto = f"Atual: {atual.width()} x {atual.height()} px"
+    texto = f"Atual: {atual.shape[1]} x {atual.shape[0]} px"
 
     if estado["imagem_original"] is not None:
         orig = estado["imagem_original"]
-        texto += f"    |    Original: {orig.width()} x {orig.height()} px"
+        texto += f"    |    Original: {orig.shape[1]} x {orig.shape[0]} px"
 
     label_info.setText(texto)
 
@@ -80,7 +76,8 @@ def exibir_imagem(estado, widgets):
     """Atualiza exibição da imagem na tela."""
     if estado["imagem_atual"] is None:
         return
-    pixmap = QPixmap.fromImage(estado["imagem_atual"])
+    qimage = array_para_qimage(estado["imagem_atual"])
+    pixmap = QPixmap.fromImage(qimage)
     widgets["label_imagem"].setPixmap(pixmap)
     widgets["label_imagem"].adjustSize()
     atualizar_info(estado, widgets["label_info"])
@@ -92,9 +89,9 @@ def aplicar_processamento(estado, janela, widgets, funcao, *args):
         QMessageBox.information(janela, "Aviso", "Nenhuma imagem carregada.")
         return
 
-    array = qimage_para_array(estado["imagem_atual"])
-    resultado = funcao(array, *args)
-    estado["imagem_atual"] = array_para_qimage(resultado)
+    estado["historico"].append(estado["imagem_atual"].copy())
+    resultado = funcao(estado["imagem_atual"], *args)
+    estado["imagem_atual"] = resultado
     exibir_imagem(estado, widgets)
 
 
@@ -106,9 +103,10 @@ def abrir_imagem(estado, janela, widgets):
     if not caminho:
         return
 
-    imagem = QImage(caminho)
-    if imagem.isNull():
-        QMessageBox.warning(janela, "Erro", f"Não foi possível abrir: {caminho}")
+    try:
+        imagem = carregar_imagem(caminho)
+    except Exception as e:
+        QMessageBox.warning(janela, "Erro", f"Não foi possível abrir: {caminho}\n{e}")
         return
 
     estado["imagem_original"] = imagem.copy()
@@ -124,7 +122,9 @@ def salvar_imagem(estado, janela):
         return
 
     filtros = "PNG (*.png);;JPEG (*.jpg);;BMP (*.bmp);;TIFF (*.tiff)"
-    caminho, filtro_usado = QFileDialog.getSaveFileName(janela, "Salvar Imagem", "", filtros)
+    caminho, filtro_usado = QFileDialog.getSaveFileName(
+        janela, "Salvar Imagem", "", filtros
+    )
 
     if not caminho:
         return
@@ -139,8 +139,22 @@ def salvar_imagem(estado, janela):
     if "." not in os.path.basename(caminho):
         caminho += extensoes.get(filtro_usado, ".png")
 
-    if not estado["imagem_atual"].save(caminho):
-        QMessageBox.warning(janela, "Erro", f"Não foi possível salvar: {caminho}")
+    try:
+        # Converte RGB → BGR pra OpenCV salvar
+        bgr = cv2.cvtColor(estado["imagem_atual"], cv2.COLOR_RGB2BGR)
+        cv2.imwrite(caminho, bgr)
+    except Exception as e:
+        QMessageBox.warning(janela, "Erro", f"Não foi possível salvar: {caminho}\n{e}")
+
+
+def desfazer(estado, janela, widgets):
+    """Desfaz última operação."""
+    if not estado["historico"]:
+        QMessageBox.information(janela, "Aviso", "Nada para desfazer.")
+        return
+
+    estado["imagem_atual"] = estado["historico"].pop()
+    exibir_imagem(estado, widgets)
 
 
 def restaurar_original(estado, janela, widgets):
@@ -151,6 +165,7 @@ def restaurar_original(estado, janela, widgets):
         )
         return
 
+    estado["historico"].append(estado["imagem_atual"].copy())
     estado["imagem_atual"] = estado["imagem_original"].copy()
     exibir_imagem(estado, widgets)
 
@@ -161,8 +176,7 @@ def pedir_redimensionar(estado, janela, widgets, metodo):
         QMessageBox.information(janela, "Aviso", "Nenhuma imagem carregada.")
         return
 
-    array = qimage_para_array(estado["imagem_atual"])
-    altura, largura = array.shape[:2]
+    altura, largura = estado["imagem_atual"].shape[:2]
     proporcao = largura / altura
 
     dialogo = QDialog(janela)
@@ -208,9 +222,42 @@ def pedir_redimensionar(estado, janela, widgets, metodo):
     if dialogo.exec_() != QDialog.Accepted:
         return
 
-    resultado = metodo(array, spin_largura.value(), spin_altura.value())
-    estado["imagem_atual"] = array_para_qimage(resultado)
+    estado["historico"].append(estado["imagem_atual"].copy())
+    resultado = metodo(
+        estado["imagem_atual"], spin_largura.value(), spin_altura.value()
+    )
+    estado["imagem_atual"] = resultado
     exibir_imagem(estado, widgets)
+
+
+def pedir_saturacao(estado, janela, widgets):
+    """Pede fator de saturação e aplica."""
+    fator, ok = QInputDialog.getDouble(
+        janela, "Saturação", "Fator (< 1 reduz, > 1 aumenta):", 1.0, 0.0, 10.0, 2
+    )
+    if not ok:
+        return
+    aplicar_processamento(estado, janela, widgets, proc.ajuste_saturacao, fator)
+
+
+def pedir_brilho(estado, janela, widgets):
+    """Pede valor de brilho e aplica."""
+    valor, ok = QInputDialog.getInt(
+        janela, "Brilho", "Valor (-255 a 255):", 0, -255, 255
+    )
+    if not ok:
+        return
+    aplicar_processamento(estado, janela, widgets, proc.ajuste_brilho, valor)
+
+
+def pedir_contraste(estado, janela, widgets):
+    """Pede fator de contraste e aplica."""
+    fator, ok = QInputDialog.getDouble(
+        janela, "Contraste", "Fator (< 1 reduz, > 1 aumenta):", 1.0, 0.0, 10.0, 2
+    )
+    if not ok:
+        return
+    aplicar_processamento(estado, janela, widgets, proc.ajuste_contraste, fator)
 
 
 def pedir_gamma(estado, janela, widgets):
@@ -223,6 +270,41 @@ def pedir_gamma(estado, janela, widgets):
     aplicar_processamento(estado, janela, widgets, proc.ajuste_gamma, gamma)
 
 
+def pedir_especificacao_histograma(estado, janela, widgets):
+    """Pede imagem de referência e aplica especificação de histograma."""
+    if estado["imagem_atual"] is None:
+        QMessageBox.information(janela, "Aviso", "Nenhuma imagem carregada.")
+        return
+
+    filtros = "Imagens (*.png *.jpg *.jpeg *.bmp *.tiff *.tif);;Todos os arquivos (*)"
+    caminho, _ = QFileDialog.getOpenFileName(
+        janela, "Imagem de Referência", "", filtros
+    )
+
+    if not caminho:
+        return
+
+    try:
+        array_ref = carregar_imagem(caminho)
+    except Exception as e:
+        QMessageBox.warning(janela, "Erro", f"Não foi possível abrir: {caminho}\n{e}")
+        return
+
+    aplicar_processamento(
+        estado, janela, widgets, proc.especificar_histograma, array_ref
+    )
+
+
+def pedir_limiar(estado, janela, widgets):
+    """Pede valor de limiar e aplica limiarização."""
+    limiar, ok = QInputDialog.getInt(
+        janela, "Limiarização", "Valor do limiar (0 a 255):", 128, 0, 255
+    )
+    if not ok:
+        return
+    aplicar_processamento(estado, janela, widgets, proc.limiarizar, limiar)
+
+
 def pedir_high_boost(estado, janela, widgets):
     """Pede fator e aplica high-boost."""
     fator, ok = QInputDialog.getDouble(
@@ -231,6 +313,16 @@ def pedir_high_boost(estado, janela, widgets):
     if not ok:
         return
     aplicar_processamento(estado, janela, widgets, proc.filtro_high_boost, fator)
+
+
+def pedir_agucamento_gradiente(estado, janela, widgets):
+    """Pede fator e aplica aguçamento por gradiente."""
+    fator, ok = QInputDialog.getDouble(
+        janela, "Aguçamento (Gradiente)", "Fator c:", 1.0, 0.1, 10.0, 2
+    )
+    if not ok:
+        return
+    aplicar_processamento(estado, janela, widgets, proc.agucamento_gradiente, fator)
 
 
 def criar_menu(estado, janela, widgets):
@@ -250,8 +342,13 @@ def criar_menu(estado, janela, widgets):
     acao_salvar.triggered.connect(lambda: salvar_imagem(estado, janela))
     menu_arquivo.addAction(acao_salvar)
 
+    acao_desfazer = QAction("Desfazer", janela)
+    acao_desfazer.setShortcut("Ctrl+Z")
+    acao_desfazer.triggered.connect(lambda: desfazer(estado, janela, widgets))
+    menu_arquivo.addAction(acao_desfazer)
+
     acao_restaurar = QAction("Restaurar Original", janela)
-    acao_restaurar.setShortcut("Ctrl+Z")
+    acao_restaurar.setShortcut("Ctrl+Shift+Z")
     acao_restaurar.triggered.connect(
         lambda: restaurar_original(estado, janela, widgets)
     )
@@ -284,6 +381,18 @@ def criar_menu(estado, janela, widgets):
     # Menu Intensidade
     menu_intensidade = barra_menu.addMenu("  Intensidade  ")
 
+    acao_brilho = QAction("Brilho", janela)
+    acao_brilho.triggered.connect(lambda: pedir_brilho(estado, janela, widgets))
+    menu_intensidade.addAction(acao_brilho)
+
+    acao_contraste = QAction("Contraste", janela)
+    acao_contraste.triggered.connect(lambda: pedir_contraste(estado, janela, widgets))
+    menu_intensidade.addAction(acao_contraste)
+
+    acao_saturacao = QAction("Saturação", janela)
+    acao_saturacao.triggered.connect(lambda: pedir_saturacao(estado, janela, widgets))
+    menu_intensidade.addAction(acao_saturacao)
+
     acao_negativo = QAction("Negativo", janela)
     acao_negativo.triggered.connect(
         lambda: aplicar_processamento(estado, janela, widgets, proc.negativo)
@@ -294,6 +403,8 @@ def criar_menu(estado, janela, widgets):
     acao_gamma.triggered.connect(lambda: pedir_gamma(estado, janela, widgets))
     menu_intensidade.addAction(acao_gamma)
 
+    menu_intensidade.addSeparator()
+
     acao_equalizar = QAction("Equalizar Histograma", janela)
     acao_equalizar.triggered.connect(
         lambda: aplicar_processamento(
@@ -302,10 +413,20 @@ def criar_menu(estado, janela, widgets):
     )
     menu_intensidade.addAction(acao_equalizar)
 
+    acao_especificar = QAction("Especificação de Histograma", janela)
+    acao_especificar.triggered.connect(
+        lambda: pedir_especificacao_histograma(estado, janela, widgets)
+    )
+    menu_intensidade.addAction(acao_especificar)
+
+    acao_limiar = QAction("Limiarização", janela)
+    acao_limiar.triggered.connect(lambda: pedir_limiar(estado, janela, widgets))
+    menu_intensidade.addAction(acao_limiar)
+
     # Menu Filtros
     menu_filtros = barra_menu.addMenu("  Filtros  ")
 
-    acao_media = QAction("Média (Suavização)", janela)
+    acao_media = QAction("Box (Suavização)", janela)
     acao_media.triggered.connect(
         lambda: aplicar_processamento(estado, janela, widgets, proc.filtro_media)
     )
@@ -317,7 +438,35 @@ def criar_menu(estado, janela, widgets):
     )
     menu_filtros.addAction(acao_gaussiano)
 
+    acao_mediana = QAction("Mediana (Suavização)", janela)
+    acao_mediana.triggered.connect(
+        lambda: aplicar_processamento(estado, janela, widgets, proc.filtro_mediana)
+    )
+    menu_filtros.addAction(acao_mediana)
+
     menu_filtros.addSeparator()
+
+    acao_sobel = QAction("Sobel (Bordas)", janela)
+    acao_sobel.triggered.connect(
+        lambda: aplicar_processamento(estado, janela, widgets, proc.filtro_sobel)
+    )
+    menu_filtros.addAction(acao_sobel)
+
+    acao_sobel_h = QAction("Sobel Horizontal (Bordas)", janela)
+    acao_sobel_h.triggered.connect(
+        lambda: aplicar_processamento(
+            estado, janela, widgets, proc.filtro_sobel_horizontal
+        )
+    )
+    menu_filtros.addAction(acao_sobel_h)
+
+    acao_sobel_v = QAction("Sobel Vertical (Bordas)", janela)
+    acao_sobel_v.triggered.connect(
+        lambda: aplicar_processamento(
+            estado, janela, widgets, proc.filtro_sobel_vertical
+        )
+    )
+    menu_filtros.addAction(acao_sobel_v)
 
     acao_laplaciano = QAction("Laplaciano (Aguçamento)", janela)
     acao_laplaciano.triggered.connect(
@@ -328,6 +477,12 @@ def criar_menu(estado, janela, widgets):
     acao_highboost = QAction("High-Boost (Aguçamento)", janela)
     acao_highboost.triggered.connect(lambda: pedir_high_boost(estado, janela, widgets))
     menu_filtros.addAction(acao_highboost)
+
+    acao_grad = QAction("Gradiente (Aguçamento)", janela)
+    acao_grad.triggered.connect(
+        lambda: pedir_agucamento_gradiente(estado, janela, widgets)
+    )
+    menu_filtros.addAction(acao_grad)
 
 
 def criar_janela(estado):

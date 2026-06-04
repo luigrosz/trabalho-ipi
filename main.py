@@ -3,6 +3,7 @@ from gui import iniciar_app
 # Estado da aplicação
 estado = {
     "imagem_original": None,
+    "historico": [],
     "imagem_atual": None,
 }
 
