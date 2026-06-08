@@ -6,61 +6,56 @@ import numpy as np
 def redimensionar_vizinho(imagem, novo_largura, novo_altura):
     """Redimensiona imagem usando interpolação por vizinho mais próximo."""
     altura, largura = imagem.shape[:2]
-    resultado = np.zeros(
-        (novo_altura, novo_largura, *imagem.shape[2:]), dtype=imagem.dtype
-    )
 
     # Calcula fator de escala entre imagem original e nova
     escala_y = altura / novo_altura
     escala_x = largura / novo_largura
 
-    # Pra cada pixel na imagem nova, acha o pixel mais próximo na original
-    for y in range(novo_altura):
-        for x in range(novo_largura):
-            orig_y = int(y * escala_y)
-            orig_x = int(x * escala_x)
-            # Garante que não ultrapassa os limites da imagem
-            orig_y = min(orig_y, altura - 1)
-            orig_x = min(orig_x, largura - 1)
-            resultado[y, x] = imagem[orig_y, orig_x]
+    # Cria arrays com todas as coordenadas de destino de uma vez
+    ys = np.arange(novo_altura)
+    xs = np.arange(novo_largura)
 
-    return resultado
+    # Mapeia cada coordenada de destino pro pixel mais próximo na original
+    # minimum garante que índices não ultrapassem o limite (ex: escala dá 100 mas max é 99)
+    orig_ys = np.minimum((ys * escala_y).astype(int), altura - 1)
+    orig_xs = np.minimum((xs * escala_x).astype(int), largura - 1)
+
+    # Indexação avançada: pega todos os pixels de uma vez
+    return imagem[np.ix_(orig_ys, orig_xs)]
 
 
 def redimensionar_bilinear(imagem, novo_largura, novo_altura):
     """Redimensiona imagem usando interpolação bilinear."""
     altura, largura = imagem.shape[:2]
-    resultado = np.zeros((novo_altura, novo_largura, *imagem.shape[2:]), dtype=np.uint8)
 
     escala_y = altura / novo_altura
     escala_x = largura / novo_largura
 
-    for y in range(novo_altura):
-        for x in range(novo_largura):
-            # Coordenadas fracionárias na imagem original
-            orig_y = y * escala_y
-            orig_x = x * escala_x
+    # Coordenadas fracionárias na imagem original pra cada pixel de destino
+    ys = np.arange(novo_altura) * escala_y
+    xs = np.arange(novo_largura) * escala_x
 
-            # 4 vizinhos mais próximos
-            y0 = int(orig_y)
-            x0 = int(orig_x)
-            y1 = min(y0 + 1, altura - 1)
-            x1 = min(x0 + 1, largura - 1)
+    # 4 vizinhos mais próximos
+    y0 = ys.astype(int)
+    x0 = xs.astype(int)
+    # minimum garante que vizinho de baixo/direita não ultrapasse o limite da imagem
+    y1 = np.minimum(y0 + 1, altura - 1)
+    x1 = np.minimum(x0 + 1, largura - 1)
 
-            # Distância fracionária até o vizinho superior esquerdo
-            dy = orig_y - y0
-            dx = orig_x - x0
+    # Distância fracionária até o vizinho superior esquerdo
+    dy = (ys - y0).reshape(-1, 1, 1) if len(imagem.shape) == 3 else (ys - y0).reshape(-1, 1)
+    dx = (xs - x0).reshape(1, -1, 1) if len(imagem.shape) == 3 else (xs - x0).reshape(1, -1)
 
-            # Média ponderada dos 4 vizinhos pela distância
-            valor = (
-                imagem[y0, x0] * (1 - dx) * (1 - dy)
-                + imagem[y0, x1] * dx * (1 - dy)
-                + imagem[y1, x0] * (1 - dx) * dy
-                + imagem[y1, x1] * dx * dy
-            )
-            resultado[y, x] = np.clip(valor, 0, 255).astype(np.uint8)
+    # Média ponderada dos 4 vizinhos pela distância
+    # Indexação: imagem[y, x] pra cada combinação de y0/y1 e x0/x1
+    valor = (
+        imagem[np.ix_(y0, x0)] * (1 - dx) * (1 - dy)
+        + imagem[np.ix_(y0, x1)] * dx * (1 - dy)
+        + imagem[np.ix_(y1, x0)] * (1 - dx) * dy
+        + imagem[np.ix_(y1, x1)] * dx * dy
+    )
 
-    return resultado
+    return np.clip(valor, 0, 255).astype(np.uint8)
 
 
 # === Conversão RGB ↔ HSI ===

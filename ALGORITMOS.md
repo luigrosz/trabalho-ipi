@@ -12,6 +12,8 @@ pixel_novo[y][x] = pixel_original[round(y * escala_y)][round(x * escala_x)]
 
 Rápido, mas gera efeito "serrilhado" (pixelado).
 
+**Implementação vetorizada:** em vez de um loop Python pixel a pixel, criamos arrays com todas as coordenadas de destino de uma vez (`np.arange`), calculamos as coordenadas de origem correspondentes com operações de array, e usamos indexação avançada do numpy (`np.ix_`) pra pegar todos os pixels numa operação só. Numpy executa isso internamente em C, então é ~100x mais rápido que loops Python.
+
 ### Interpolação Bilinear
 
 Pra cada pixel na imagem nova, pega os 4 vizinhos mais próximos na imagem original e faz uma média ponderada pela distância.
@@ -21,6 +23,8 @@ valor = A*(1-dx)*(1-dy) + B*dx*(1-dy) + C*(1-dx)*dy + D*dx*dy
 ```
 
 Onde A, B, C, D são os 4 vizinhos e dx, dy são as distâncias fracionárias. Resultado mais suave que vizinho mais próximo.
+
+**Implementação vetorizada:** calcula arrays de todas as coordenadas fracionárias, todos os índices dos 4 vizinhos, e todos os pesos (dx, dy) de uma vez. A média ponderada é uma expressão numpy que opera em todos os pixels simultaneamente via broadcasting — dy tem shape `(altura, 1, 1)` e dx tem shape `(1, largura, 1)` pra se combinar com a imagem 3D (altura × largura × canais).
 
 ---
 
