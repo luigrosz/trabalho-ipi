@@ -20,8 +20,9 @@ def redimensionar_vizinho(imagem, novo_largura, novo_altura):
     orig_ys = np.minimum((ys * escala_y).astype(int), altura - 1)
     orig_xs = np.minimum((xs * escala_x).astype(int), largura - 1)
 
-    # Indexação avançada: pega todos os pixels de uma vez
-    return imagem[np.ix_(orig_ys, orig_xs)]
+    # Monta grade 2D com todas combinações de coordenadas
+    grid_x, grid_y = np.meshgrid(orig_xs, orig_ys)
+    return imagem[grid_y, grid_x]
 
 
 def redimensionar_bilinear(imagem, novo_largura, novo_altura):
@@ -31,30 +32,35 @@ def redimensionar_bilinear(imagem, novo_largura, novo_altura):
     escala_y = altura / novo_altura
     escala_x = largura / novo_largura
 
-    # Coordenadas fracionárias na imagem original pra cada pixel de destino
+    # Grade 2D com coordenadas fracionárias na imagem original
     ys = np.arange(novo_altura) * escala_y
     xs = np.arange(novo_largura) * escala_x
+    grid_x, grid_y = np.meshgrid(xs, ys)
 
     # 4 vizinhos mais próximos
-    y0 = ys.astype(int)
-    x0 = xs.astype(int)
+    y0 = grid_y.astype(int)
+    x0 = grid_x.astype(int)
     # minimum garante que vizinho de baixo/direita não ultrapasse o limite da imagem
     y1 = np.minimum(y0 + 1, altura - 1)
     x1 = np.minimum(x0 + 1, largura - 1)
 
     # Distância fracionária até o vizinho superior esquerdo
-    dy = (ys - y0).reshape(-1, 1, 1) if len(imagem.shape) == 3 else (ys - y0).reshape(-1, 1)
-    dx = (xs - x0).reshape(1, -1, 1) if len(imagem.shape) == 3 else (xs - x0).reshape(1, -1)
+    dy = grid_y - y0
+    dx = grid_x - x0
+    # numpy replica automaticamente pros 3 canais de cor.
+    if len(imagem.shape) == 3:
+        dy = dy[:, :, np.newaxis]
+        dx = dx[:, :, np.newaxis]
 
     # Média ponderada dos 4 vizinhos pela distância
-    # Indexação: imagem[y, x] pra cada combinação de y0/y1 e x0/x1
     valor = (
-        imagem[np.ix_(y0, x0)] * (1 - dx) * (1 - dy)
-        + imagem[np.ix_(y0, x1)] * dx * (1 - dy)
-        + imagem[np.ix_(y1, x0)] * (1 - dx) * dy
-        + imagem[np.ix_(y1, x1)] * dx * dy
+        imagem[y0, x0] * (1 - dx) * (1 - dy)
+        + imagem[y0, x1] * dx * (1 - dy)
+        + imagem[y1, x0] * (1 - dx) * dy
+        + imagem[y1, x1] * dx * dy
     )
 
+    # Como o valor é calculado com float pode ficar fora do range.
     return np.clip(valor, 0, 255).astype(np.uint8)
 
 
@@ -75,7 +81,7 @@ def rgb_para_hsi(imagem):
     soma = r + g + b
     saturacao = np.where(soma == 0, 0, 1 - 3 * minimo / soma)
 
-    # Matiz = ângulo calculado com arccos usando diferenças entre canais
+    # Matiz = ângulo calculado usando diferenças entre canais
     numerador = 0.5 * ((r - g) + (r - b))
     denominador = np.sqrt((r - g) ** 2 + (r - b) * (g - b))
     denominador = np.where(denominador == 0, 1e-10, denominador)
@@ -268,36 +274,44 @@ def limiarizar(imagem, limiar):
 # === Filtragem Espacial ===
 
 
-def _aplicar_filtro(imagem, kernel):
+def _aplicar_filtro(imagem, kernel, com_padding=True):
     """Aplica convolução com kernel. Se colorida, processa cada canal separado."""
     kh, kw = kernel.shape
-    pad_y = kh // 2
-    pad_x = kw // 2
+    pad_y = kh // 2 if com_padding else 0
+    pad_x = kw // 2 if com_padding else 0
 
     if len(imagem.shape) == 3:
         resultado = np.zeros_like(imagem, dtype=np.float64)
         for c in range(imagem.shape[2]):
-            resultado[:, :, c] = _convolver_canal(imagem[:, :, c], kernel, pad_y, pad_x)
+            resultado[:, :, c] = _convolver_canal(
+                imagem[:, :, c], kernel, pad_y, pad_x, com_padding
+            )
         return resultado.clip(0, 255).astype(np.uint8)
 
-    resultado = _convolver_canal(imagem, kernel, pad_y, pad_x)
+    resultado = _convolver_canal(imagem, kernel, pad_y, pad_x, com_padding)
     return resultado.clip(0, 255).astype(np.uint8)
 
 
-def _convolver_canal(canal, kernel, pad_y, pad_x):
+def _convolver_canal(canal, kernel, pad_y, pad_x, com_padding):
     """Convolução: pra cada pixel, multiplica vizinhos pelo kernel e soma."""
     altura, largura = canal.shape
     kh, kw = kernel.shape
 
-    # Padding com réplica das bordas
-    padded = np.pad(
-        canal.astype(np.float64), ((pad_y, pad_y), (pad_x, pad_x)), mode="edge"
-    )
-    resultado = np.zeros_like(canal, dtype=np.float64)
+    if com_padding:
+        padded = np.pad(
+            canal.astype(np.float64), ((pad_y, pad_y), (pad_x, pad_x)), mode="edge"
+        )
+    else:
+        padded = canal.astype(np.float64)
+
+    # Sem padding, resultado é menor
+    out_h = altura if com_padding else altura - kh + 1
+    out_w = largura if com_padding else largura - kw + 1
+    resultado = np.zeros((out_h, out_w), dtype=np.float64)
 
     # Percorre cada pixel e aplica o kernel na vizinhança
-    for y in range(altura):
-        for x in range(largura):
+    for y in range(out_h):
+        for x in range(out_w):
             regiao = padded[y : y + kh, x : x + kw]
             resultado[y, x] = np.sum(regiao * kernel)
 
@@ -305,32 +319,40 @@ def _convolver_canal(canal, kernel, pad_y, pad_x):
 
 
 def filtro_media(imagem, tamanho=3):
-    """Filtro box: kernel com todos os pesos iguais (1/n²). Suaviza a imagem."""
+    """Filtro box: kernel com todos os pesos iguais. Suaviza a imagem."""
     kernel = np.ones((tamanho, tamanho), dtype=np.float64) / (tamanho * tamanho)
     return _aplicar_filtro(imagem, kernel)
 
 
-def filtro_mediana(imagem, tamanho=3):
+def filtro_mediana(imagem, tamanho=3, com_padding=True):
     """Filtro de mediana: ordena vizinhos e pega valor do meio. Bom pra ruído sal e pimenta."""
-    pad = tamanho // 2
+    pad = tamanho // 2 if com_padding else 0
 
     if len(imagem.shape) == 3:
         resultado = np.zeros_like(imagem)
         for c in range(imagem.shape[2]):
-            resultado[:, :, c] = _mediana_canal(imagem[:, :, c], tamanho, pad)
+            resultado[:, :, c] = _mediana_canal(imagem[:, :, c], tamanho, pad, com_padding)
         return resultado
 
-    return _mediana_canal(imagem, tamanho, pad)
+    return _mediana_canal(imagem, tamanho, pad, com_padding)
 
 
-def _mediana_canal(canal, tamanho, pad):
+def _mediana_canal(canal, tamanho, pad, com_padding):
     """Aplica filtro de mediana em um canal."""
     altura, largura = canal.shape
-    padded = np.pad(canal, ((pad, pad), (pad, pad)), mode="edge")
-    resultado = np.zeros_like(canal)
 
-    for y in range(altura):
-        for x in range(largura):
+    if com_padding:
+        padded = np.pad(canal, ((pad, pad), (pad, pad)), mode="edge")
+    else:
+        padded = canal
+
+    # Sem padding, resultado é menor (perde bordas)
+    out_h = altura if com_padding else altura - tamanho + 1
+    out_w = largura if com_padding else largura - tamanho + 1
+    resultado = np.zeros((out_h, out_w), dtype=canal.dtype)
+
+    for y in range(out_h):
+        for x in range(out_w):
             # Pega todos os vizinhos, ordena e pega o do meio
             vizinhos = padded[y : y + tamanho, x : x + tamanho].ravel()
             resultado[y, x] = np.sort(vizinhos)[len(vizinhos) // 2]
