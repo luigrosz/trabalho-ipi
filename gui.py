@@ -328,6 +328,7 @@ def pedir_agucamento_gradiente(estado, janela, widgets):
 def criar_menu(estado, janela, widgets):
     """Cria barra de menu com ações."""
     barra_menu = janela.menuBar()
+    barra_menu.setNativeMenuBar(False)
 
     # Menu Arquivo
     menu_arquivo = barra_menu.addMenu("  Arquivo  ")
